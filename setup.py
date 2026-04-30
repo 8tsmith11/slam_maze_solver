@@ -20,7 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'potential_field_nav = slam_maze_solver.potential_field_nav:main'
+            'potential_field_nav_node = slam_maze_solver.potential_field_nav_node:main'
         ],
     },
 )
