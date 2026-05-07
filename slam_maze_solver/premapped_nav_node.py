@@ -23,7 +23,6 @@ class PremappedNavNode(Node):
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
             reliability=QoSReliabilityPolicy.RELIABLE,
         )
-
         self.create_subscription(OccupancyGrid, 'map', self.map_callback, qos)
         self.create_subscription(PoseWithCovarianceStamped, 'amcl_pose', self.pose_callback, qos)
         self.target_publisher = self.create_publisher(PointStamped, 'goal_point', 10)
@@ -38,15 +37,16 @@ class PremappedNavNode(Node):
 
         w = msg.info.width
         h = msg.info.height
-        data: deque[int] = deque(msg.data)
+        
 
         # The map is sent as a 1D array with width and height info
         # Convert to 2D array
+        i = 0
         self.grid = []
         for _ in range(h):
             self.grid.append([])
             for _ in range(w):
-                self.grid[-1].append(0 <= data.popleft() < OBSTACLE_THRESHOLD)
+                self.grid[-1].append(0 <= msg.data[i] < OBSTACLE_THRESHOLD)
 
         self.get_logger().info(f'Map built: {w}x{h}, resolution={msg.info.resolution:.4f}')
 
