@@ -19,13 +19,13 @@ class PotentialFieldNavigationNode(Node):
         super().__init__('potential_field_nav_node')
 
         self.cmd_pub = self.create_publisher(TwistStamped, 'cmd_vel', 10)
-        self.forward_speed = 0.8 # constant forward velocity
+        self.forward_speed = 0.3 # constant forward velocity
         timer_period = 1.0 / 20.0 # 20 Hz loop rate in seconds
         self.timer = self.create_timer(timer_period, self.timer_callback)
 
         # Obstacle Avoidance
         self.repulsive_angular_z = 0.0
-        self.k_avoid = 0.05
+        self.k_avoid = 0.15
         self.scan_sub = self.create_subscription(
             LaserScan, 'scan', self.scan_callback, qos_profile_sensor_data
         )
