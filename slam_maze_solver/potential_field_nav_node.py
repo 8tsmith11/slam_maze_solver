@@ -50,6 +50,7 @@ class PotentialFieldNavigationNode(Node):
         self.robot_yaw = 0.0
         self.have_odom = False
         self.max_angular_speed = 1.2
+        self.front_min_distance = float('inf')
 
         self.get_logger().info(
             'PotentialFieldNavigationNode started. Ready to receive goal.'
@@ -57,6 +58,7 @@ class PotentialFieldNavigationNode(Node):
 
     def scan_callback(self, msg: LaserScan):
         repulsive_sum = 0.0
+        front_min = float('inf')
 
         for i, d in enumerate(msg.ranges):
             if math.isinf(d) or math.isnan(d) or d <= 0.0:
@@ -65,9 +67,23 @@ class PotentialFieldNavigationNode(Node):
                 continue
 
             theta = msg.angle_min + i * msg.angle_increment
-            repulsive_sum += (-1.0 / (d * 2)) * math.sin(theta)
-        
-        self.repulsive_angular_z = repulsive_sum * self.k_avoid
+
+            # Ignore rear obstacles
+            if abs(theta) > math.radians(90):
+                continue
+            if abs(theta) < math.radians(20):
+                front_min = min(front_min, d)
+            influence_radius = 1.5
+            if d < influence_radius:
+                force =  (1.0 / d - 1.0 / influence_radius) / (d * d)
+                repulsive_sum += -force * math.sin(theta)
+
+        self.front_min_distance = front_min
+        new_repulsive = repulsive_sum * self.k_avoid
+
+        alpha = 0.8
+
+        self.repulsive_angular_z = alpha * self.repulsive_angular_z + (1.0 - alpha) * new_repulsive
 
     def goal_point_callback(self, msg: PointStamped):
         """Store latest goal point (map coordinates)."""
@@ -131,16 +147,20 @@ class PotentialFieldNavigationNode(Node):
         if distance < self.goal_tolerance:
             twist_stamped.twist.linear.x = 0.0
             twist_stamped.twist.angular.z = 0.0
-            self.target_angular_z = 0.0
             self.cmd_pub.publish(twist_stamped)
             return
 
-        # Set the forward velocity to a constant value
-        twist_stamped.twist.linear.x = self.forward_speed
+        if self.front_min_distance < 0.35:
+            twist_stamped.twist.linear.x = 0.0
+            twist_stamped.twist.angular.z = 0.5
+            self.cmd_pub.publish(twist_stamped)
+            return
 
-        # Control only the z-axis orientation velocity
         target_angular_velocity = self.repulsive_angular_z + self.compute_attractive_heading()
         target_angular_velocity = max(-self.max_angular_speed, min(self.max_angular_speed, target_angular_velocity))
+        heading_scale = max(0.2, 1.0 - abs(target_angular_velocity) / self.max_angular_speed)
+        obstacle_scale = min(1.0, self.front_min_distance / 1.0)
+        twist_stamped.twist.linear.x = self.forward_spee* heading_scale * obstacle_scale
         twist_stamped.twist.angular.z = target_angular_velocity
 
         self.cmd_pub.publish(twist_stamped)
