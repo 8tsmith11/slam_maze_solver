@@ -8,15 +8,22 @@ from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 
 OBSTACLE_THRESHOLD = 50
 LOOKAHEAD_TILES = 20
-MAX_COVARIANCE = 0.2
-GOAL = (22.910588, -21.78772)
+MAX_COVARIANCE = 0.5
 
 class PremappedNavNode(Node):
     def __init__(self):
         super().__init__('premapped_nav_node')
+        self.declare_parameter('goal_x', 0.0)
+        self.declare_parameter('goal_y', 0.0)
+        goal_x = self.get_parameter('goal_x').value
+        goal_y = self.get_parameter('goal_y').value
+        self.goal = (goal_x, goal_y)
+
         self.grid: list[list[bool]] | None = None
         self.map_info: MapMetaData | None = None
         self.path: list[tuple[int, int]] | None = None
+        self.path_progress: int = 0
+        self.current_target: tuple[float, float] | None = None
 
         qos = QoSProfile(
             depth=1,
@@ -26,6 +33,7 @@ class PremappedNavNode(Node):
         self.create_subscription(OccupancyGrid, 'map', self.map_callback, qos)
         self.create_subscription(PoseWithCovarianceStamped, 'amcl_pose', self.pose_callback, qos)
         self.target_publisher = self.create_publisher(PointStamped, 'goal_point', 10)
+        self.create_timer(0.1, self.publish_target)
         self.get_logger().info('PremappedNavNode started, waiting for map and amcl_pose...')
 
     def map_callback(self, msg: OccupancyGrid):
@@ -47,6 +55,7 @@ class PremappedNavNode(Node):
             self.grid.append([])
             for _ in range(w):
                 self.grid[-1].append(0 <= msg.data[i] < OBSTACLE_THRESHOLD)
+                i += 1
 
         self.get_logger().info(f'Map built: {w}x{h}, resolution={msg.info.resolution:.4f}')
 
@@ -60,22 +69,25 @@ class PremappedNavNode(Node):
         y = msg.pose.pose.position.y
 
         if not self.path:
-            self.get_logger().info(f'Planning path from ({x:.2f}, {y:.2f}) to {GOAL}')
+            self.get_logger().info(f'Planning path from ({x:.2f}, {y:.2f}) to {self.goal}')
             self.path = self.bfs(x, y)
             self.get_logger().info(f'Path found with {len(self.path)} waypoints')
 
-        target = self.get_target(x, y)
-        if target:
-            target_msg = PointStamped()
-            target_msg.header.stamp = self.get_clock().now().to_msg()
-            target_msg.header.frame_id = 'map'
-            target_msg.point.x = target[0]
-            target_msg.point.y = target[1]
-            self.target_publisher.publish(target_msg)
+        self.current_target = self.get_target(x, y)
+
+    def publish_target(self):
+        if self.current_target is None:
+            return
+        target_msg = PointStamped()
+        target_msg.header.stamp = self.get_clock().now().to_msg()
+        target_msg.header.frame_id = 'map'
+        target_msg.point.x = self.current_target[0]
+        target_msg.point.y = self.current_target[1]
+        self.target_publisher.publish(target_msg)
 
     def bfs(self, wx, wy) -> list[tuple[int, int]]:
         start = self.world_to_grid(wx, wy)
-        goal = self.world_to_grid(*GOAL)
+        goal = self.world_to_grid(*self.goal)
         q: deque[tuple[int, int]] = deque([start])
         prev = {start: None}
 
@@ -126,7 +138,8 @@ class PremappedNavNode(Node):
         gx, gy = self.world_to_grid(wx, wy)
         distances = [math.hypot(gx - x, gy - y) for (x, y) in self.path]
         closest_index = distances.index(min(distances))
-        target_index = min(closest_index + LOOKAHEAD_TILES, len(self.path) - 1)
+        self.path_progress = max(self.path_progress, closest_index)
+        target_index = min(self.path_progress + LOOKAHEAD_TILES, len(self.path) - 1)
         tx, ty = self.path[target_index]
         return self.grid_to_world(tx, ty)
 
